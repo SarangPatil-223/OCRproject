@@ -1,0 +1,141 @@
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@2.1.0/dist/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR Web App</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>OCR Web App</h1>
+        
+        <input type="file" id="fileInput" accept=".png, .jpeg, .jpg, .pdf"/>
+        <button type="button" onclick="processFile()">Extract Text</button>
+        <pre id="output"></pre>
+        
+        <div class="output">
+            <h2>Extracted Text:</h2>
+            <textarea id="textOutput" rows="10" cols="50" readonly></textarea>
+        </div>
+        
+        <button id="downloadButton" onclick="downloadPDF()">Download as PDF</button>
+        
+        <div class="info">
+            <h2>About OCR</h2>
+            <p>Optical Character Recognition (OCR) is a technology used to convert different types of documents—such as scanned paper documents, PDF files, or images taken by a digital camera—into editable and searchable data.</p>
+        </div>
+    </div>
+
+    <script>
+        async function processFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            const output = document.getElementById('output');
+            output.textContent = "Processing...";
+
+            if (!file) {
+                output.textContent = "No file selected.";
+                return;
+            }
+
+            const fileType = file.type;
+
+            if (fileType === 'application/pdf') {
+                await extractTextFromPDF(file);
+            } else if (fileType === 'image/png' || fileType === 'image/jpeg') {
+                extractTextFromImage(file);
+            } else {
+                output.textContent = "Unsupported file type.";
+            }
+        }
+
+        function extractTextFromImage(file) {
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                Tesseract.recognize(e.target.result, 'eng', {
+                    logger: info => console.log(info), // Optional: to see the progress
+                    psm: 12, // Example: assume a single uniform block of text
+                    oem: 3  // Example: use LSTM only
+                })
+                .then(({ data: { text } }) => {
+                    document.getElementById('textOutput').value = text;
+                })
+                .catch((err) => {
+                    document.getElementById('output').textContent = 'Error: ' + err;
+                });
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function extractTextFromPDF(file) {
+            const reader = new FileReader();
+
+            reader.onload = async function (e) {
+                const typedArray = new Uint8Array(e.target.result);
+                const pdf = await pdfjsLib.getDocument(typedArray).promise;
+                let textPromises = [];
+
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const viewport = page.getViewport({ scale: 1.5 }); // Increased scale for better image quality
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+
+                    await page.render({ canvasContext: context, viewport: viewport }).promise;
+
+                    // Convert the canvas to a data URL and use it as an image for Tesseract OCR
+                    const dataURL = canvas.toDataURL('image/png');
+
+                    // Use Tesseract to recognize text from the image
+                    textPromises.push(
+                        Tesseract.recognize(dataURL, 'eng', {
+                            logger: info => console.log(info),
+                            psm: 6,  // Assume a single block of text
+                            oem: 1   // Use LSTM OCR engine
+                        }).then(result => result.data.text)
+                    );
+                }
+
+                try {
+                    const texts = await Promise.all(textPromises);
+                    document.getElementById('textOutput').value = texts.join('\n');
+                } catch (err) {
+                    document.getElementById('output').textContent = 'Error: ' + err;
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function downloadPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const textContent = document.getElementById('textOutput').value;
+    
+    // Set the max character length per line
+    const maxLineLength = 80;
+
+    // Function to format text with new lines if it exceeds max line length
+    const formatText = (text, maxLength) => {
+        const regex = new RegExp(`(.{1,${maxLength}})(\\s+|$)`, 'g');
+        return text.match(regex).join('\n');
+    };
+
+    // Format the extracted text
+    const formattedText = formatText(textContent, maxLineLength);
+
+    // Add formatted text to the PDF document
+    doc.text(formattedText, 10, 10);
+    doc.save('extracted-text.pdf');
+}
+
+    </script>
+</body>
+</html>
